@@ -1,0 +1,25 @@
+# Lets the Coder provisioner manage NetworkPolicies in the org namespaces, for
+# templates/org-netpol. Not part of coder-workspace-provisioner: with this, a
+# template can open a namespace to traffic its own policies do not allow.
+#
+# Adding an org: copy a RoleBinding and change the namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: coder-workspace-network-policies
+rules:
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [create, delete, get, list, patch, update, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: coder-provisioner-network-policies, namespace: acme-workspaces}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: coder-workspace-network-policies}
+subjects: [{kind: ServiceAccount, name: coder, namespace: coder}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: coder-provisioner-network-policies, namespace: globex-workspaces}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: coder-workspace-network-policies}
+subjects: [{kind: ServiceAccount, name: coder, namespace: coder}]

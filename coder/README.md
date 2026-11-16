@@ -13,6 +13,8 @@ Users see no organisation field; the template resolves it from their SSO account
 | `templates/org-isolated` | Claim-based org placement. Uses `oidc-claims` |
 | `templates/claim-gated` | `org-isolated` plus a group-gated workspace profile. Uses `oidc-claims` and `gated-parameter` |
 | `templates/egress-zoned` | `org-isolated` in `<org>-zoned-workspaces`, egress only through the org's zone proxy. Uses `oidc-claims` and `org-mapping` |
+| `templates/org-netpol` | Example: a NetworkPolicy per workspace built from the `organisations` claim. Uses `oidc-claims` and `org-mapping` |
+| `tenancy/template-network-policies.yaml` | Lets the provisioner manage NetworkPolicies in the org namespaces, for `org-netpol` |
 | `tenancy/egress-zones.yaml` | One stand-in proxy (Squid) per network zone |
 | `tenancy/zoned-orgs.yaml` | `<org>-zoned-workspaces` namespaces, each assigned a zone |
 
@@ -31,6 +33,7 @@ The other two modules are optional and take plain lists, so a template can feed 
 - **Node pinning**: workspace pods select `coder.demo/org-<org>=true`. [Detail](docs/design.md#node-isolation)
 - **Network isolation**: pods accept traffic only from namespaces of the same organisation.
 - **Egress zones** (`egress-zoned` only): each org's workspaces reach the network only through their zone's proxy. [Detail](docs/design.md#egress-zones)
+- **Claim-based network policy** (`org-netpol` only): each workspace accepts traffic from the namespaces of every organisation in its owner's claim. [Detail](#network-policy-per-workspace-org-netpol)
 - **Scoped provisioner**: Coder's service account can only write to `*-workspaces` namespaces.
 
 ## Requirements
@@ -52,6 +55,8 @@ scripts/push-template.sh claim-gated
 kubectl apply -f tenancy/egress-zones.yaml -f tenancy/zoned-orgs.yaml   # Zone proxies, zoned namespaces
 kubectl apply -f tenancy/namespace-lookup.yaml       # Provisioner may get namespaces (org-mapping)
 scripts/push-template.sh egress-zoned
+kubectl apply -f tenancy/template-network-policies.yaml   # Provisioner may manage NetworkPolicies (org-netpol)
+scripts/push-template.sh org-netpol
 ```
 
 `push-template.sh` copies the template with its `modules` symlink resolved, since Coder uploads symlinks as-is.
@@ -153,6 +158,35 @@ Sorry, your account is not in any organisation. If you believe this is an error,
 The namespace is pinned on the first build; changing `namespace_pattern` affects new workspaces only.
 
 Each pod has a 1-hour service account token for audience `egress-proxy` at `$EGRESS_PROXY_TOKEN_FILE`, for the future auth proxy.
+
+## Network policy per workspace (`org-netpol`)
+
+An example of building Kubernetes objects from a claim.
+The workspace runs in `<org>-workspaces` and gets one NetworkPolicy selecting its pod:
+
+```hcl
+peer_orgs = distinct(concat([module.org.organisation], module.org.user_organisations))
+
+ingress {
+  dynamic "from" {
+    for_each = local.peer_orgs
+    content {
+      namespace_selector { match_labels = { "coder.demo/org" = from.value } }
+    }
+  }
+}
+```
+
+| Owner's claim | Workspace namespace | Accepts traffic from namespaces labelled |
+|---|---|---|
+| `acme` | `acme-workspaces` | `coder.demo/org=acme` |
+| `acme`, `globex` | `acme-workspaces` | `coder.demo/org=acme`, `coder.demo/org=globex` |
+
+The policy exists while the workspace is started and is rebuilt from the claim on each start.
+NetworkPolicies add up, so it widens what the namespace's `org-isolation` policy allows and does not narrow it.
+It needs `tenancy/template-network-policies.yaml`, which lets any template open an org namespace to other traffic.
+
+Not yet run on the cluster: `terraform validate` and a server-side dry run of the RBAC only.
 
 ## Known issues
 
