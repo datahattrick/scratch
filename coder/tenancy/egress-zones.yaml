@@ -1,0 +1,156 @@
+# Egress zones: one forward proxy per network zone, in its own namespace.
+# Stand-in for the auth proxy (separate project): plain Squid with a domain
+# allow-list per zone, no authentication.
+#
+# A workspace namespace joins a zone with the label
+# coder.demo/egress-zone=<zone> (see zoned-orgs.yaml). Each proxy accepts
+# connections only from namespaces carrying its zone label.
+# Adding a zone: copy a zone block, change the name and the zone_dst ACL.
+#
+# Zones:
+#   restricted - github.com and githubusercontent.com only
+#   open       - any host on ports 80/443
+
+# ----------------------------------------------------------------- restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: egress-restricted
+  labels:
+    coder.demo/egress-proxy: restricted
+    pod-security.kubernetes.io/enforce: baseline
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: squid, namespace: egress-restricted}
+data:
+  squid.conf: |
+    acl zone_dst dstdomain .github.com .githubusercontent.com
+    http_port 3128
+    acl SSL_ports port 443
+    acl Safe_ports port 80 443
+    acl CONNECT method CONNECT
+    http_access deny !Safe_ports
+    http_access deny CONNECT !SSL_ports
+    http_access allow zone_dst
+    http_access deny all
+    cache deny all
+    pid_filename none
+    visible_hostname egress-restricted
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: egress-proxy, namespace: egress-restricted}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: egress-proxy}}
+  template:
+    metadata:
+      labels: {app: egress-proxy}
+      annotations: {config/acl: "acl zone_dst dstdomain .github.com .githubusercontent.com"}  # restart on ACL change
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: squid
+          image: ubuntu/squid:6.6-24.04_edge
+          ports: [{containerPort: 3128, name: proxy}]
+          readinessProbe: {tcpSocket: {port: proxy}}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          volumeMounts:
+            - {name: conf, mountPath: /etc/squid/squid.conf, subPath: squid.conf}
+      volumes:
+        - {name: conf, configMap: {name: squid}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: egress-proxy, namespace: egress-restricted}
+spec:
+  selector: {app: egress-proxy}
+  ports: [{name: proxy, port: 3128, targetPort: proxy}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: zone-members-only, namespace: egress-restricted}
+spec:
+  podSelector: {matchLabels: {app: egress-proxy}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {coder.demo/egress-zone: restricted}
+      ports: [{port: 3128, protocol: TCP}]
+
+# ----------------------------------------------------------------- open
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: egress-open
+  labels:
+    coder.demo/egress-proxy: open
+    pod-security.kubernetes.io/enforce: baseline
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: squid, namespace: egress-open}
+data:
+  squid.conf: |
+    acl zone_dst src all
+    http_port 3128
+    acl SSL_ports port 443
+    acl Safe_ports port 80 443
+    acl CONNECT method CONNECT
+    http_access deny !Safe_ports
+    http_access deny CONNECT !SSL_ports
+    http_access allow zone_dst
+    http_access deny all
+    cache deny all
+    pid_filename none
+    visible_hostname egress-open
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: egress-proxy, namespace: egress-open}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: egress-proxy}}
+  template:
+    metadata:
+      labels: {app: egress-proxy}
+      annotations: {config/acl: "acl zone_dst src all"}  # restart on ACL change
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: squid
+          image: ubuntu/squid:6.6-24.04_edge
+          ports: [{containerPort: 3128, name: proxy}]
+          readinessProbe: {tcpSocket: {port: proxy}}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          volumeMounts:
+            - {name: conf, mountPath: /etc/squid/squid.conf, subPath: squid.conf}
+      volumes:
+        - {name: conf, configMap: {name: squid}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: egress-proxy, namespace: egress-open}
+spec:
+  selector: {app: egress-proxy}
+  ports: [{name: proxy, port: 3128, targetPort: proxy}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: zone-members-only, namespace: egress-open}
+spec:
+  podSelector: {matchLabels: {app: egress-proxy}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {coder.demo/egress-zone: open}
+      ports: [{port: 3128, protocol: TCP}]

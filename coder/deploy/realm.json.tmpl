@@ -1,0 +1,57 @@
+{
+  "realm": "coder",
+  "enabled": true,
+  "groups": [
+    {"name": "acme"},
+    {"name": "globex"},
+    {"name": "USER_DEVELOPER"}
+  ],
+  "clients": [
+    {
+      "clientId": "coder",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${OIDC_SECRET}",
+      "redirectUris": ["http://coder.192.168.88.253.nip.io/api/v2/users/oidc/callback"],
+      "webOrigins": ["http://coder.192.168.88.253.nip.io"],
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "protocolMappers": [
+        {
+          "name": "organisations",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "organisations",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {"id": "40bb3af1-36cb-4d91-9b24-b9573ad3c36d", "username": "alice", "email": "alice@example.test", "emailVerified": true, "firstName": "Alice", "lastName": "Acme",
+     "enabled": true, "realmRoles": ["default-roles-coder", "offline_access"], "groups": ["acme", "USER_DEVELOPER"], "credentials": [{"type": "password", "value": "${USER_PASSWORD}", "temporary": false}]},
+    {"id": "885b3a5e-4c53-422e-a5f6-71f955995683", "username": "bob", "email": "bob@example.test", "emailVerified": true, "firstName": "Bob", "lastName": "Globex",
+     "enabled": true, "realmRoles": ["default-roles-coder", "offline_access"], "groups": ["globex"], "credentials": [{"type": "password", "value": "${USER_PASSWORD}", "temporary": false}]},
+    {"id": "6e094a83-c166-42aa-9af5-0fb4faada365", "username": "carol", "email": "carol@example.test", "emailVerified": true, "firstName": "Carol", "lastName": "Both",
+     "enabled": true, "realmRoles": ["default-roles-coder", "offline_access"], "groups": ["acme", "globex", "USER_DEVELOPER"], "credentials": [{"type": "password", "value": "${USER_PASSWORD}", "temporary": false}]},
+    {"id": "2cfb44f3-68e8-494a-8fe6-83be642639f0", "username": "dave", "email": "dave@example.test", "emailVerified": true, "firstName": "Dave", "lastName": "Nobody",
+     "enabled": true, "realmRoles": ["default-roles-coder", "offline_access"], "groups": [], "credentials": [{"type": "password", "value": "${USER_PASSWORD}", "temporary": false}]}
+  ]
+}

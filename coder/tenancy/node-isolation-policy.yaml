@@ -1,0 +1,66 @@
+# Enforces "pods in org X's namespace only run on nodes labelled coder.demo/org-X=true".
+# Applies only to namespaces labelled coder.demo/org-isolation=enabled; the org
+# comes from the namespace's coder.demo/org label (see orgs.yaml).
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicy
+metadata:
+  name: coder-org-node-selector
+spec:
+  failurePolicy: Fail
+  reinvocationPolicy: IfNeeded
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {coder.demo/org-isolation: enabled}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+  variables:
+    - name: org
+      expression: namespaceObject.metadata.labels['coder.demo/org']
+  mutations:
+    - patchType: ApplyConfiguration
+      applyConfiguration:
+        expression: >
+          Object{spec: Object.spec{nodeSelector: {'coder.demo/org-' + variables.org: 'true'}}}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: coder-org-node-selector
+spec:
+  policyName: coder-org-node-selector
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: coder-org-node-isolation
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {coder.demo/org-isolation: enabled}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  variables:
+    - name: key
+      expression: "'coder.demo/org-' + namespaceObject.metadata.labels['coder.demo/org']"
+  validations:
+    - expression: "!has(object.spec.nodeName) || object.spec.nodeName == '' || request.operation == 'UPDATE'"
+      message: "spec.nodeName is not allowed in org-isolated namespaces (it bypasses node isolation)"
+    - expression: "has(object.spec.nodeSelector) && variables.key in object.spec.nodeSelector && object.spec.nodeSelector[variables.key] == 'true'"
+      messageExpression: "'pods must select ' + variables.key + '=true'"
+    - expression: "object.spec.nodeSelector.all(k, !k.startsWith('coder.demo/org-') || k == variables.key)"
+      messageExpression: "'pods may not select another organisation\\'s nodes (only ' + variables.key + ')'"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: coder-org-node-isolation
+spec:
+  policyName: coder-org-node-isolation
+  validationActions: [Deny]

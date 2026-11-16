@@ -1,0 +1,25 @@
+coder:
+  env:
+    - {name: CODER_ACCESS_URL, value: "http://coder.192.168.88.253.nip.io"}
+    - name: CODER_PG_CONNECTION_URL
+      valueFrom: {secretKeyRef: {name: coder-db-url, key: url}}
+    - {name: CODER_OIDC_ISSUER_URL, value: "http://keycloak.192.168.88.253.nip.io/realms/coder"}
+    - {name: CODER_OIDC_CLIENT_ID, value: coder}
+    - name: CODER_OIDC_CLIENT_SECRET
+      valueFrom: {secretKeyRef: {name: coder-oidc, key: client-secret}}
+    # offline_access => refresh token, so Coder can refresh the (short-lived)
+    # access token before handing it to the template at build time.
+    - {name: CODER_OIDC_SCOPES, value: "openid,profile,email,offline_access"}
+    - {name: CODER_OIDC_SIGN_IN_TEXT, value: "Sign in with Keycloak"}
+    - {name: CODER_TELEMETRY_ENABLE, value: "false"}
+  service:
+    type: ClusterIP
+  ingress:
+    enable: true
+    host: coder.192.168.88.253.nip.io
+  serviceAccount:
+    # Namespace-scoped perms in "coder" only. Tenant namespaces get their own
+    # RoleBinding via the Capsule Tenant (tenancy/tenants.yaml).
+    workspacePerms: false
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}

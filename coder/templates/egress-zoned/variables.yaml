@@ -1,0 +1,4 @@
+# Admin-only variables for egress-zoned: scripts/push-template.sh egress-zoned
+# Organisations are supported when "<namespace_pattern with their name>" exists.
+namespace_pattern: "<org>-zoned-workspaces"
+support_contact: "the platform team (#coder-help)"

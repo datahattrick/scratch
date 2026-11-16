@@ -1,0 +1,4 @@
+# Admin-only variables for org-isolated:
+#   scripts/push-template.sh org-isolated   (passes this file)
+# Allow-list in priority order; a user in several organisations gets the first listed.
+organisations: '["globex", "acme"]'

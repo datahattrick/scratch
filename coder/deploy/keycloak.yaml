@@ -1,0 +1,71 @@
+# Test IdP only: dev mode, in-memory DB, realm re-imported on restart.
+# User ids are pinned in realm.json.tmpl so the OIDC `sub` survives restarts.
+# The realm itself is in the keycloak-realm Secret (see scripts/deploy.sh).
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: coder
+spec:
+  selector: {app: keycloak}
+  ports: [{port: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: coder
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: keycloak}
+  template:
+    metadata:
+      labels: {app: keycloak}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.8.2
+          args: [start-dev, --import-realm]
+          env:
+            - {name: KC_HOSTNAME, value: "http://keycloak.192.168.88.253.nip.io"}
+            - {name: KC_HTTP_ENABLED, value: "true"}
+            - {name: KC_PROXY_HEADERS, value: xforwarded}
+            - {name: KC_HEALTH_ENABLED, value: "true"}
+            - {name: KC_BOOTSTRAP_ADMIN_USERNAME, value: admin}
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom: {secretKeyRef: {name: keycloak-realm, key: admin-password}}
+          ports: [{containerPort: 8080}, {containerPort: 9000, name: mgmt}]
+          readinessProbe:
+            httpGet: {path: /health/ready, port: 9000}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 200m, memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: realm, mountPath: /opt/keycloak/data/import, readOnly: true}
+      volumes:
+        - name: realm
+          secret:
+            secretName: keycloak-realm
+            items: [{key: realm.json, path: coder-realm.json}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: keycloak
+  namespace: coder
+spec:
+  rules:
+    - host: keycloak.192.168.88.253.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: {name: keycloak, port: {number: 8080}}

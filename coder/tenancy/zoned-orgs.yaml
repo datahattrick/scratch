@@ -1,0 +1,145 @@
+# Workspace namespaces for templates/egress-zoned: one per organisation,
+# separate from <org>-workspaces so org-isolated workspaces are unaffected.
+#
+# All egress is denied except DNS, the Coder server (agent connection) and the
+# proxy of the namespace's zone. The zone is the coder.demo/egress-zone label;
+# the matching proxy (egress-zones.yaml) only accepts that label. The
+# egress-proxy ConfigMap gives pods the proxy settings; changing them doesn't
+# change what is reachable.
+#
+# Adding an org: copy one block, set the org and its zone.
+# Requires coder-workspace-provisioner from orgs.yaml.
+
+# ----------------------------------------------------------------- acme -> restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: acme-zoned-workspaces
+  labels:
+    coder.demo/org: acme
+    coder.demo/org-isolation: enabled
+    coder.demo/egress-zone: restricted
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: coder-provisioner, namespace: acme-zoned-workspaces}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: coder-workspace-provisioner}
+subjects: [{kind: ServiceAccount, name: coder, namespace: coder}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: egress-proxy, namespace: acme-zoned-workspaces}
+data:
+  EGRESS_ZONE: restricted
+  HTTP_PROXY: &proxy http://egress-proxy.egress-restricted.svc.cluster.local:3128
+  HTTPS_PROXY: *proxy
+  http_proxy: *proxy
+  https_proxy: *proxy
+  NO_PROXY: &noproxy localhost,127.0.0.1,.svc,.cluster.local,coder.192.168.88.253.nip.io
+  no_proxy: *noproxy
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: org-isolation, namespace: acme-zoned-workspaces}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {coder.demo/org: acme}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: egress-zone, namespace: acme-zoned-workspaces}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: coder}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: coder}}
+      ports: [{port: 8080, protocol: TCP}]
+    - to:
+        - namespaceSelector: {matchLabels: {coder.demo/egress-proxy: restricted}}
+          podSelector: {matchLabels: {app: egress-proxy}}
+      ports: [{port: 3128, protocol: TCP}]
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata: {name: org-quota, namespace: acme-zoned-workspaces}
+spec:
+  hard: {limits.cpu: "8", limits.memory: 16Gi, persistentvolumeclaims: "20"}
+
+# ----------------------------------------------------------------- globex -> open
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: globex-zoned-workspaces
+  labels:
+    coder.demo/org: globex
+    coder.demo/org-isolation: enabled
+    coder.demo/egress-zone: open
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: coder-provisioner, namespace: globex-zoned-workspaces}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: coder-workspace-provisioner}
+subjects: [{kind: ServiceAccount, name: coder, namespace: coder}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: egress-proxy, namespace: globex-zoned-workspaces}
+data:
+  EGRESS_ZONE: open
+  HTTP_PROXY: &proxy http://egress-proxy.egress-open.svc.cluster.local:3128
+  HTTPS_PROXY: *proxy
+  http_proxy: *proxy
+  https_proxy: *proxy
+  NO_PROXY: &noproxy localhost,127.0.0.1,.svc,.cluster.local,coder.192.168.88.253.nip.io
+  no_proxy: *noproxy
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: org-isolation, namespace: globex-zoned-workspaces}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {coder.demo/org: globex}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: egress-zone, namespace: globex-zoned-workspaces}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: coder}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: coder}}
+      ports: [{port: 8080, protocol: TCP}]
+    - to:
+        - namespaceSelector: {matchLabels: {coder.demo/egress-proxy: open}}
+          podSelector: {matchLabels: {app: egress-proxy}}
+      ports: [{port: 3128, protocol: TCP}]
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata: {name: org-quota, namespace: globex-zoned-workspaces}
+spec:
+  hard: {limits.cpu: "8", limits.memory: 16Gi, persistentvolumeclaims: "20"}

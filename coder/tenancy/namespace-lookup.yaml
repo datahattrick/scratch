@@ -1,0 +1,18 @@
+# Lets the Coder provisioner check whether a namespace exists (and read its
+# labels), which modules/org-mapping uses to decide if an organisation is
+# supported. get only: it cannot list namespaces or read anything inside them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: coder-namespace-lookup
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: coder-namespace-lookup
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: coder-namespace-lookup}
+subjects: [{kind: ServiceAccount, name: coder, namespace: coder}]
