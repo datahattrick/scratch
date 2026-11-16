@@ -1,50 +1,20 @@
-# ------------------------------------------------------------------ claims
+# ------------------------------------------------------------ organisations
 
-variable "claim_source" {
-  type        = string
-  default     = "userinfo"
-  description = "\"userinfo\" (call the IdP's userinfo endpoint) or \"access_token\" (decode the JWT access token)."
-}
-
-variable "userinfo_url" {
-  type        = string
-  description = "The IdP's userinfo_endpoint. Required for claim_source = \"userinfo\"."
-}
-
-variable "organisations_claim" {
-  type        = string
-  default     = "organisations"
-  description = "Name of the claim holding the user's organisations."
+variable "organisations" {
+  type        = list(string)
+  description = "The owner's organisations, e.g. lookup(module.oidc.lists, \"organisations\", []). May be empty on stop and delete."
 }
 
 variable "organisation_name_regex" {
   type        = string
   default     = "^[a-z0-9]([-a-z0-9]{0,40}[a-z0-9])?$"
-  description = "Claim values not matching this are ignored. The default keeps names usable in a namespace name."
+  description = "Values not matching this are ignored. The default keeps names usable in a namespace name."
 }
 
 variable "lowercase_organisations" {
   type        = bool
   default     = true
-  description = "Lower-case claim values before matching."
-}
-
-variable "groups_claim" {
-  type        = string
-  default     = "groups"
-  description = "Name of the claim holding the user's groups. Passed through as the `groups` output."
-}
-
-variable "group_pattern" {
-  type        = string
-  default     = "^/?(.+)$"
-  description = "Regex extracting the group name from each value; see ../oidc-claims."
-}
-
-variable "group_names" {
-  type        = map(string)
-  default     = {}
-  description = "Renames group values (e.g. Entra ID object IDs to names); see ../oidc-claims."
+  description = "Lower-case values before matching."
 }
 
 # ---------------------------------------------------------------- placement

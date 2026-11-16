@@ -1,17 +1,25 @@
-# Reads the workspace owner's OIDC claims in Coder OSS.
+# The workspace owner's OIDC claims, for any template (Coder OSS).
 #
-# Coder OSS doesn't expose arbitrary OIDC claims (or the ID token) to
-# templates, and IdP group/org sync is Premium. It does pass the owner's OIDC
-# access token, which gets us the claims one of two ways:
+#   module "oidc" {
+#     source       = "./modules/oidc-claims"
+#     userinfo_url = "https://idp.example/userinfo"
+#   }
 #
-#   userinfo     - call the IdP's userinfo endpoint with the access token. Works
-#                  when the claim is only in the ID token / userinfo, works with
-#                  opaque access tokens, and the IdP validates the token.
-#   access_token - decode the JWT access token locally. No network call, but
-#                  needs the claim in the access token; signature not verified.
+#   module.oidc.claims.email                      # any claim, as the IdP sent it
+#   lookup(module.oidc.lists, "groups", [])       # a claim as list(string)
 #
-# Only real workspace builds get a token (not import, dry-run or the dashboard
-# parameter preview), so the lookup is skipped when the token is empty.
+# The module knows nothing about organisations, groups or placement; what a
+# claim means is up to the template.
+#
+# Coder passes templates the owner's OIDC access token, not the claims. They
+# are read one of two ways:
+#
+#   userinfo     - call the IdP's userinfo endpoint with the access token.
+#   access_token - decode the JWT access token. No network call; the signature
+#                  is not verified.
+#
+# Only workspace builds get a token (not import, dry-run or the dashboard
+# parameter preview); without one, claims is {}.
 #
 # Files: main.tf (providers, data sources), variables.tf, locals.tf,
 # outputs.tf.
@@ -23,10 +31,11 @@ terraform {
   }
 }
 
+data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
 data "http" "userinfo" {
-  count = var.claim_source == "userinfo" && local.has_token && var.fetch ? 1 : 0
+  count = var.claim_source == "userinfo" && local.has_token && local.fetch ? 1 : 0
   url   = var.userinfo_url
   request_headers = {
     Authorization = "Bearer ${local.access_token}"

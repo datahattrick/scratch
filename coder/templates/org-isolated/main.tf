@@ -9,13 +9,19 @@ terraform {
 variable "claim_source" {
   type        = string
   default     = "userinfo"
-  description = "Where to read the organisations claim: \"userinfo\" or \"access_token\". See modules/oidc-claims."
+  description = "Where to read the claims: \"userinfo\" or \"access_token\". See modules/oidc-claims."
 }
 
 variable "oidc_userinfo_url" {
   type        = string
   default     = "http://keycloak.192.168.88.253.nip.io/realms/coder/protocol/openid-connect/userinfo"
   description = "The IdP's userinfo_endpoint (from /.well-known/openid-configuration)."
+}
+
+variable "organisations_claim" {
+  type        = string
+  default     = "organisations"
+  description = "Name of the claim holding the user's organisations."
 }
 
 # Admin-only (set with `coder templates push --variables-file`); users never
@@ -36,17 +42,18 @@ data "coder_provisioner" "me" {}
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
-module "claims" {
+# The owner's OIDC claims. userinfo is only called on start, so stop/delete
+# work even if the user lost their org or SSO session.
+module "oidc" {
   source       = "./modules/oidc-claims"
   claim_source = var.claim_source
   userinfo_url = var.oidc_userinfo_url
-  # Only on start: stop/delete must work even if the user lost their org or SSO session.
-  fetch = data.coder_workspace.me.start_count == 1
 }
 
 locals {
-  orgs       = module.claims.organisations
-  is_import  = module.claims.is_import
+  # Lower-cased; values that could not be a namespace name are dropped.
+  orgs       = sort(distinct([for o in lookup(module.oidc.lists, var.organisations_claim, []) : lower(o) if can(regex("^[a-z0-9]([-a-z0-9]{0,40}[a-z0-9])?$", lower(o)))]))
+  is_import  = module.oidc.is_import
   eligible   = nonsensitive([for o in var.organisations : o if contains(local.orgs, o)])
   resolved   = length(local.eligible) > 0 ? local.eligible[0] : "none"
   org        = terraform_data.org.output

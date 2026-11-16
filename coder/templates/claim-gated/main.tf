@@ -9,13 +9,19 @@ terraform {
 variable "claim_source" {
   type        = string
   default     = "userinfo"
-  description = "Where to read the organisations claim: \"userinfo\" or \"access_token\". See modules/oidc-claims."
+  description = "Where to read the claims: \"userinfo\" or \"access_token\". See modules/oidc-claims."
 }
 
 variable "oidc_userinfo_url" {
   type        = string
   default     = "http://keycloak.192.168.88.253.nip.io/realms/coder/protocol/openid-connect/userinfo"
   description = "The IdP's userinfo_endpoint (from /.well-known/openid-configuration)."
+}
+
+variable "organisations_claim" {
+  type        = string
+  default     = "organisations"
+  description = "Name of the claim holding the user's organisations."
 }
 
 # Admin-only (set with `coder templates push --variables-file`); users never
@@ -55,15 +61,12 @@ data "coder_provisioner" "me" {}
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
-module "claims" {
+# The owner's OIDC claims. userinfo is only called on start, so stop/delete
+# work even if the user lost their org or SSO session.
+module "oidc" {
   source       = "./modules/oidc-claims"
   claim_source = var.claim_source
   userinfo_url = var.oidc_userinfo_url
-  # Only on start: stop/delete must work even if the user lost their org or SSO session.
-  fetch         = data.coder_workspace.me.start_count == 1
-  groups_claim  = var.groups_claim
-  group_pattern = var.group_pattern
-  group_names   = jsondecode(var.group_names)
 }
 
 # ---------------------------------------------------------------------------
@@ -72,6 +75,13 @@ module "claims" {
 # Mutable, so a user who loses the group can switch back to Standard.
 # ---------------------------------------------------------------------------
 locals {
+  # Group names from the groups claim, compared exactly (case-sensitive).
+  # group_pattern extracts the name (regex returns a list when the pattern has
+  # capture groups, a string otherwise); group_names then renames.
+  raw_groups     = lookup(module.oidc.lists, var.groups_claim, [])
+  matched_groups = [for g in local.raw_groups : try(regex(var.group_pattern, g)[0], regex(var.group_pattern, g)) if can(regex(var.group_pattern, g))]
+  groups         = sort(distinct([for g in local.matched_groups : lookup(jsondecode(var.group_names), g, g)]))
+
   profiles = {
     standard  = { name = "Standard", required_group = null, cpu = "2", memory = "2Gi" }
     developer = { name = "Developer", required_group = "USER_DEVELOPER", cpu = "4", memory = "8Gi" }
@@ -85,9 +95,9 @@ module "profile" {
   display_name = "Workspace profile"
   description  = "Developer requires membership of the USER_DEVELOPER group in SSO."
   default      = "standard"
-  user_groups  = module.claims.groups
+  user_groups  = local.groups
   # Entra ID group overage: say so in the error rather than just "not in group".
-  groups_incomplete = module.claims.groups_overage
+  groups_incomplete = contains(module.oidc.incomplete, var.groups_claim)
   options = { for k, p in local.profiles : k => {
     name           = p.name
     description    = "${p.cpu} CPU, ${p.memory}."
@@ -96,8 +106,9 @@ module "profile" {
 }
 
 locals {
-  orgs       = module.claims.organisations
-  is_import  = module.claims.is_import
+  # Lower-cased; values that could not be a namespace name are dropped.
+  orgs       = sort(distinct([for o in lookup(module.oidc.lists, var.organisations_claim, []) : lower(o) if can(regex("^[a-z0-9]([-a-z0-9]{0,40}[a-z0-9])?$", lower(o)))]))
+  is_import  = module.oidc.is_import
   eligible   = nonsensitive([for o in var.organisations : o if contains(local.orgs, o)])
   resolved   = length(local.eligible) > 0 ? local.eligible[0] : "none"
   org        = terraform_data.org.output

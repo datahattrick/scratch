@@ -58,7 +58,7 @@ Stop and delete skip all of it: userinfo is not called and nothing is checked.
 ```mermaid
 flowchart TD
     S(["Start build"]) --> R["Read claims<br/>userinfo, or decode the JWT access token"]
-    R --> N["organisations claim: lower-case, regex filter, sort"]
+    R --> N["organisations claim: lower-case, regex filter, sort<br/>(org-mapping)"]
     N --> F{"First build?"}
     F -- yes --> L["For each org: GET namespace<br/>namespace_pattern with org substituted"]
     L --> E{"Any namespace exists<br/>with coder.demo/org = org?"}
@@ -80,7 +80,8 @@ The userinfo call fails the build on a non-200 response (`Sign out of Coder and 
 ## Reading the claim
 
 Coder OSS stores the ID token's claims but does not pass them, or the ID token, to templates.
-The template gets the claim from the access token in one of two ways, chosen by `claim_source`.
+`modules/oidc-claims` gets the claims from the access token in one of two ways, chosen by `claim_source`.
+It returns all of them (`claims`, and `lists` with each claim as a list of strings) and interprets none.
 
 | | `userinfo` (default) | `access_token` |
 |---|:---:|:---:|
@@ -97,7 +98,10 @@ The provisioner (the Coder pod) needs network access to that endpoint.
 Microsoft Entra ID's userinfo endpoint returns only standard claims.
 For Entra, issue the access token for your own API (add `api://<client-id>/<scope>` to `CODER_OIDC_SCOPES`) with the claim configured on it, and use `access_token`.
 
-With `access_token`, `modules/oidc-claims` splits the JWT, converts base64url to padded base64, `jsondecode`s the payload, and keeps names matching `^[a-z0-9]([-a-z0-9]{0,40}[a-z0-9])?$`.
+With `access_token`, `modules/oidc-claims` splits the JWT, converts base64url to padded base64, and `jsondecode`s the payload.
+
+The claims are exposed non-sensitive, so templates can use them in `count`, `for_each` and resource names.
+They appear in build logs; the token does not.
 
 The signature is not verified in Terraform.
 The token comes from Coder's database, written after Coder validated the login, and is not user input.
@@ -122,7 +126,8 @@ If Coder cannot refresh the token (revoked session), the build receives an empty
 ## Choosing the organisation
 
 `modules/org-mapping` (`egress-zoned`) has no list.
-It maps each claimed organisation to a namespace with `namespace_pattern` and uses the first, alphabetically, that exists and carries `coder.demo/org=<org>`.
+It takes the organisations as an input (`egress-zoned` passes `module.oidc.lists["organisations"]`), lower-cases them, and drops values not matching `^[a-z0-9]([-a-z0-9]{0,40}[a-z0-9])?$`.
+It maps each remaining organisation to a namespace with `namespace_pattern` and uses the first, alphabetically, that exists and carries `coder.demo/org=<org>`.
 The label check stops a pattern like `<org>` from matching an unrelated namespace such as `default`.
 Checking needs `get` on namespaces (`tenancy/namespace-lookup.yaml`); a missing namespace reads as empty, not as an error.
 The provisioner can still only write where `tenancy/*orgs.yaml` binds it, so a namespace that exists but is not a workspace namespace fails at apply.
@@ -143,7 +148,7 @@ Ways to give that choice back, if needed:
 `templates/claim-gated` only.
 The `profile` parameter has fixed options in `local.profiles`; `modules/gated-parameter` renders them and reports whether the chosen one is allowed.
 Each option may name a `required_group`.
-`modules/oidc-claims` reads `groups_claim` from the same claims as `organisations` and compares exactly.
+The template reads `groups_claim` from `module.oidc.lists` and compares exactly.
 Each value goes through `group_pattern` (the first capture group is the name) and then `group_names` (a rename map).
 
 | IdP | Groups claim | `group_pattern` | `group_names` |
@@ -155,7 +160,7 @@ Each value goes through `group_pattern` (the first capture group is the name) an
 Entra ID and Ping are not tested here.
 Entra ID's userinfo endpoint does not return groups, so it needs `claim_source = "access_token"` with an access token issued for the Coder app registration (not Microsoft Graph), with the groups claim configured on it.
 Entra ID can emit group names instead of IDs (`sAMAccountName` for synced groups, `cloud_displayname` for cloud-only groups); then `group_names` is not needed.
-Over 200 groups, Entra ID leaves the claim out (group overage); `groups_overage` is then true and the profile error says so.
+Over 200 groups, Entra ID leaves the claim out (group overage); `module.oidc.incomplete` then contains `groups` and the profile error says so.
 
 The check is a second precondition on the Deployment, so it runs only on start.
 Stop and delete never need the group.
@@ -169,7 +174,7 @@ The dashboard parameter preview has no OIDC token, so it cannot hide options a u
 Coder's own `data.coder_workspace_owner.me.groups` is available in the preview, but filling it from the IdP needs Premium group sync.
 
 In the test realm, `USER_DEVELOPER` is a Keycloak group emitted by a `groups` mapper.
-The `organisations` mapper also emits all groups, so `USER_DEVELOPER` appears there too; it is dropped by the DNS-name filter and the allow-list.
+The `organisations` mapper also emits all groups, so `USER_DEVELOPER` appears there too; it is dropped by the DNS-name filter in the templates and `org-mapping`.
 
 ## Egress zones
 

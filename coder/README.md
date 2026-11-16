@@ -7,19 +7,22 @@ Users see no organisation field; the template resolves it from their SSO account
 
 | Path | Contents |
 |---|---|
-| `modules/oidc-claims` | Reads the owner's OIDC claims (`organisations`, `groups`) via userinfo or the access token |
-| `modules/org-mapping` | Maps the claim to an existing `<pattern>` namespace, pins and enforces it, for any template. [Usage](modules/org-mapping/README.md) |
-| `modules/gated-parameter` | A parameter whose options can each require an IdP group |
+| `modules/oidc-claims` | The owner's OIDC claims, for any template. [Usage](modules/oidc-claims/README.md) |
+| `modules/org-mapping` | Maps a list of organisations to an existing `<pattern>` namespace, pins and enforces it. [Usage](modules/org-mapping/README.md) |
+| `modules/gated-parameter` | A parameter whose options can each require a group |
 | `templates/org-isolated` | Claim-based org placement. Uses `oidc-claims` |
-| `templates/claim-gated` | `org-isolated` plus a group-gated workspace profile. Uses both modules |
-| `templates/egress-zoned` | `org-isolated` in `<org>-zoned-workspaces`, egress only through the org's zone proxy. Uses `org-mapping` |
+| `templates/claim-gated` | `org-isolated` plus a group-gated workspace profile. Uses `oidc-claims` and `gated-parameter` |
+| `templates/egress-zoned` | `org-isolated` in `<org>-zoned-workspaces`, egress only through the org's zone proxy. Uses `oidc-claims` and `org-mapping` |
 | `tenancy/egress-zones.yaml` | One stand-in proxy (Squid) per network zone |
 | `tenancy/zoned-orgs.yaml` | `<org>-zoned-workspaces` namespaces, each assigned a zone |
 
 Each template is pushed under its own name, so they can be changed and tested independently.
 Templates reach the modules through a `modules` symlink.
-New templates should use `org-mapping`; `org-isolated` and `claim-gated` predate it and still inline the design.
+Every template reads claims through `oidc-claims`, which returns them as sent and has no organisation or group logic.
+The other two modules are optional and take plain lists, so a template can feed them any claim.
+`org-isolated` and `claim-gated` predate `org-mapping` and still inline the placement.
 
+- **Generic claims module**: `module.oidc.claims` holds every claim, `module.oidc.lists` each one as a list of strings. [Detail](modules/oidc-claims/README.md)
 - **Claim-based placement**: the template reads `organisations` from the IdP's userinfo endpoint (or the JWT access token) and deploys into `<org>-workspaces`. [Detail](docs/design.md#reading-the-claim)
 - **Admin-controlled organisations**: `org-isolated` and `claim-gated` list enabled organisations in a sensitive template variable. `egress-zoned` supports any organisation whose namespace exists. [Detail](docs/design.md#choosing-the-organisation)
 - **Start-time authorisation**: starting a workspace for an organisation no longer in the user's claim fails. Stop and delete always work.
@@ -136,7 +139,8 @@ There is no list in the template; creating or deleting the namespace enables or 
 | `namespace_pattern` | `<org>-zoned-workspaces` | Namespace per organisation, e.g. `test-<org>` |
 | `support_contact` | `your Coder administrator` | Shown in every error |
 
-Every `modules/org-mapping` variable is also a template variable. [Detail](modules/org-mapping/README.md#variables)
+`claim_source`, `oidc_userinfo_url` and `organisations_claim` select the claim.
+Every other `modules/org-mapping` variable is also a template variable. [Detail](modules/org-mapping/README.md#variables)
 
 A user in several supported organisations gets the first alphabetically.
 Users get an error on creation, and the workspace can be deleted:

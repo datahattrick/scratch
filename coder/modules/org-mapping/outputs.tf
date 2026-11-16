@@ -25,26 +25,5 @@ output "labels" {
 
 output "user_organisations" {
   value       = local.orgs
-  description = "All organisations in the user's claim (normalised, filtered), supported or not."
-}
-
-output "groups" {
-  value       = module.claims.groups
-  description = "The user's groups claim, for use with ../gated-parameter."
-}
-
-output "groups_overage" {
-  value       = module.claims.groups_overage
-  description = "True when the IdP left groups out (Entra ID overage)."
-}
-
-output "claims" {
-  value       = module.claims.claims
-  sensitive   = true
-  description = "All claims as a map. Empty when not fetched (stop/delete, import)."
-}
-
-output "is_import" {
-  value       = local.is_import
-  description = "True during template import or dry-run."
+  description = "var.organisations after normalising and filtering, supported or not."
 }

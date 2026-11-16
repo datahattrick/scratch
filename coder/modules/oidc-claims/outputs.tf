@@ -1,22 +1,21 @@
 output "claims" {
   value       = local.claims
-  sensitive   = true
-  description = "All claims as a map. Empty when no token or not fetched."
+  description = "All claims, as the IdP sent them. {} when there is no token or userinfo was not fetched."
 }
 
-output "organisations" {
-  value       = local.orgs
-  description = "Values of the organisations claim, normalised and filtered."
+output "lists" {
+  value       = local.lists
+  description = "Claim name => list(string), for every claim that is a scalar or a list of scalars. Use lookup(module.oidc.lists, \"groups\", [])."
 }
 
-output "groups" {
-  value       = local.groups
-  description = "Group names from the groups claim, after group_pattern and group_names; case preserved."
+output "incomplete" {
+  value       = local.incomplete
+  description = "Names of claims the IdP left out (Entra ID group overage: [\"groups\"])."
 }
 
-output "groups_overage" {
-  value       = local.groups_overage
-  description = "True when the IdP left the groups out because there were too many (Entra ID group overage); groups is then incomplete."
+output "has_token" {
+  value       = local.has_token
+  description = "False for password-login users, import, dry-run and the dashboard parameter preview."
 }
 
 output "is_import" {

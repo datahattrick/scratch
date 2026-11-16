@@ -1,10 +1,10 @@
 # org-mapping
 
-Maps a Coder workspace owner to an organisation and namespace from their OIDC claims, pins it, and enforces it.
+Maps a Coder workspace owner to an organisation and namespace, pins it, and enforces it.
 Works on Coder OSS.
 
-- Reads the claims through [`oidc-claims`](../oidc-claims/main.tf) (userinfo or the JWT access token).
-- Turns each claimed organisation into a namespace with `namespace_pattern` (`test-<org>`); the organisation is supported if that namespace exists and carries `namespace_org_label=<org>`.
+- Takes the owner's organisations as a list, usually an OIDC claim read with [`oidc-claims`](../oidc-claims/README.md).
+- Turns each organisation into a namespace with `namespace_pattern` (`test-<org>`); the organisation is supported if that namespace exists and carries `namespace_org_label=<org>`.
 - Uses the first supported organisation alphabetically.
 - Pins the organisation and namespace on the first build; claim or pattern changes never move a workspace.
 - Fails a start when the user has no supported organisation, or has left the pinned one. Stop and delete never check.
@@ -17,9 +17,14 @@ Needs `get` on namespaces for the provisioner: [`tenancy/namespace-lookup.yaml`]
 ## Usage
 
 ```hcl
+module "oidc" {
+  source       = "./modules/oidc-claims"
+  userinfo_url = "https://idp.example/realms/x/protocol/openid-connect/userinfo"
+}
+
 module "org" {
   source            = "./modules/org-mapping"
-  userinfo_url      = "https://idp.example/realms/x/protocol/openid-connect/userinfo"
+  organisations     = lookup(module.oidc.lists, "organisations", [])
   namespace_pattern = "test-<org>"
   support_contact   = "the platform team"
 }
@@ -57,17 +62,12 @@ moved {
 
 | Name | Default | Purpose |
 |---|---|---|
-| `userinfo_url` | required | IdP userinfo endpoint |
+| `organisations` | required | The owner's organisations |
 | `namespace_pattern` | `<org>-workspaces` | Namespace per organisation; must contain `<org>` |
 | `namespace_org_label` | `coder.demo/org` | Label the namespace must carry with the organisation as value; empty for existence only |
 | `support_contact` | `your Coder administrator` | Shown in every error |
-| `claim_source` | `userinfo` | `userinfo` or `access_token` |
-| `organisations_claim` | `organisations` | Claim holding the organisations |
-| `organisation_name_regex` | DNS label, ≤42 chars | Claim values not matching are ignored |
-| `lowercase_organisations` | `true` | Lower-case claim values before matching |
-| `groups_claim` | `groups` | Claim passed through as the `groups` output |
-| `group_pattern` | `^/?(.+)$` | Regex extracting each group name (first capture group); LDAP DNs: `^(?i)cn=([^,]+)` |
-| `group_names` | `{}` | Renames group values, e.g. Entra ID object IDs to names |
+| `organisation_name_regex` | DNS label, ≤42 chars | Values not matching are ignored |
+| `lowercase_organisations` | `true` | Lower-case values before matching |
 | `node_label_pattern` | `coder.demo/org-<org>` | Node label key; empty for no node selector |
 | `org_label_key` | `coder.demo/org` | Key of the organisation label in `labels`; empty for none |
 | `require_organisation` | `true` | Fail starts with no supported organisation |
@@ -82,11 +82,7 @@ moved {
 | `namespace` | Pinned namespace |
 | `node_selector` | `{ <node label> = "true" }`, or `{}` |
 | `labels` | `{ <org_label_key> = <organisation> }`, or `{}` |
-| `user_organisations` | Every organisation in the claim, supported or not |
-| `groups` | The groups claim, for [`gated-parameter`](../gated-parameter/main.tf) |
-| `groups_overage` | True when the IdP left groups out (Entra ID overage) |
-| `claims` | All claims as a map. Sensitive; empty on stop/delete |
-| `is_import` | True during template import and dry-run |
+| `user_organisations` | `organisations` after normalising and filtering, supported or not |
 
 ## Errors
 

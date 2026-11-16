@@ -69,25 +69,6 @@ variable "lowercase_organisations" {
   description = "Lower-case claim values before matching."
 }
 
-variable "groups_claim" {
-  type        = string
-  default     = "groups"
-  description = "Name of the claim holding the user's groups."
-}
-
-variable "group_pattern" {
-  type        = string
-  default     = "^/?(.+)$"
-  description = "Regex extracting the group name from each groups claim value (first capture group). Keycloak: the default; LDAP DNs (Ping): \"^(?i)cn=([^,]+)\"."
-}
-
-# JSON, since template variables can't be maps.
-variable "group_names" {
-  type        = string
-  default     = "{}"
-  description = "JSON object renaming group values, e.g. Entra ID object IDs: {\"6f1c...\": \"USER_DEVELOPER\"}."
-}
-
 variable "require_organisation" {
   type        = bool
   default     = true
@@ -116,25 +97,28 @@ data "coder_provisioner" "me" {}
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
+# The owner's OIDC claims. userinfo is only called on start, so stop/delete
+# work without an SSO session.
+module "oidc" {
+  source       = "./modules/oidc-claims"
+  claim_source = var.claim_source
+  userinfo_url = var.oidc_userinfo_url
+}
+
 # Resolves the organisation from the claim and the namespaces that exist, pins
 # it, and fails starts with no supported organisation.
 module "org" {
   source                  = "./modules/org-mapping"
+  organisations           = lookup(module.oidc.lists, var.organisations_claim, [])
+  organisation_name_regex = var.organisation_name_regex
+  lowercase_organisations = var.lowercase_organisations
   namespace_pattern       = var.namespace_pattern
-  support_contact         = var.support_contact
   namespace_org_label     = var.namespace_org_label
   node_label_pattern      = var.node_label_pattern
   org_label_key           = var.org_label_key
-  claim_source            = var.claim_source
-  userinfo_url            = var.oidc_userinfo_url
-  organisations_claim     = var.organisations_claim
-  organisation_name_regex = var.organisation_name_regex
-  lowercase_organisations = var.lowercase_organisations
-  groups_claim            = var.groups_claim
-  group_pattern           = var.group_pattern
-  group_names             = jsondecode(var.group_names)
   require_organisation    = var.require_organisation
   recheck_on_start        = var.recheck_on_start
+  support_contact         = var.support_contact
 }
 
 # The pin used to live in this template.

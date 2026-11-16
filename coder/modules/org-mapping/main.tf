@@ -1,8 +1,9 @@
-# Maps a Coder workspace owner to an organisation and namespace from their
-# OIDC claims (Coder OSS).
+# Maps a Coder workspace owner to an organisation and namespace (Coder OSS).
 #
-#   1. Reads the claims with ../oidc-claims (userinfo or the access token).
-#   2. Turns each organisation in the claim into a namespace with
+#   1. Takes the owner's organisations as a list, from anywhere; usually an
+#      OIDC claim read with ../oidc-claims:
+#        organisations = lookup(module.oidc.lists, "organisations", [])
+#   2. Turns each organisation into a namespace with
 #      namespace_pattern (e.g. "test-<org>"). An organisation is supported
 #      when that namespace exists (and, if namespace_org_label is set, is
 #      labelled with the organisation). The first supported one, in
@@ -28,28 +29,15 @@
 terraform {
   required_providers {
     coder      = { source = "coder/coder" }
-    http       = { source = "hashicorp/http" }
     kubernetes = { source = "hashicorp/kubernetes" }
   }
 }
 
 data "coder_workspace" "me" {}
 
-module "claims" {
-  source                  = "../oidc-claims"
-  claim_source            = var.claim_source
-  userinfo_url            = var.userinfo_url
-  organisations_claim     = var.organisations_claim
-  organisation_name_regex = var.organisation_name_regex
-  lowercase_organisations = var.lowercase_organisations
-  groups_claim            = var.groups_claim
-  group_pattern           = var.group_pattern
-  group_names             = var.group_names
-  # Only on start: stop/delete must work without an SSO session.
-  fetch = data.coder_workspace.me.start_count == 1
-}
+data "coder_workspace_owner" "me" {}
 
-# Empty on stop/delete (no claims are fetched). A missing namespace reads as
+# Empty when var.organisations is (stop/delete with userinfo claims). A missing namespace reads as
 # an empty uid rather than an error.
 data "kubernetes_namespace_v1" "candidate" {
   for_each = local.ns_for

@@ -1,7 +1,10 @@
 locals {
-  # From the claims.
-  orgs      = module.claims.organisations # sorted
-  is_import = module.claims.is_import
+  # Normalised: optionally lower-cased, filtered by the regex, sorted.
+  norm_orgs = [for o in var.organisations : var.lowercase_organisations ? lower(o) : o]
+  orgs      = sort(distinct([for o in local.norm_orgs : o if can(regex(var.organisation_name_regex, o))]))
+
+  # Template import and CLI dry-runs have no real owner (login_type unset).
+  is_import = try(data.coder_workspace_owner.me.login_type, null) == null
   starting  = data.coder_workspace.me.start_count == 1
   ns_for    = { for o in local.orgs : o => replace(var.namespace_pattern, "<org>", o) }
 
