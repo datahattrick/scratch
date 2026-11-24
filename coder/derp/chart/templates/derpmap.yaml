@@ -1,0 +1,48 @@
+{{- if .Values.derpMap.enabled }}
+{{- $m := .Values.derpMap }}
+{{- $id := int $m.regionID }}
+{{- $splitStun := and .Values.stun.enabled (or $m.stunHostName $m.stunIPv4) }}
+{{- $node := dict
+  "Name" (printf "%da" $id)
+  "RegionID" $id
+  "HostName" (include "derper.publicHost" .)
+  "DERPPort" (include "derper.publicDerpPort" . | int)
+  "STUNPort" (ternary (include "derper.publicStunPort" . | int) -1 (and .Values.stun.enabled (empty $splitStun)))
+}}
+{{- with $m.ipv4 }}{{ $_ := set $node "IPv4" . }}{{ end }}
+{{- if not (include "derper.publicTLS" .) }}{{ $_ := set $node "ForceHTTP" true }}{{ end }}
+{{- if $m.insecureForTests }}{{ $_ := set $node "InsecureForTests" true }}{{ end }}
+{{- $regions := dict (toString $id) (dict
+  "RegionID" $id
+  "RegionCode" $m.regionCode
+  "RegionName" $m.regionName
+  "Nodes" (list $node)
+) }}
+{{- if $splitStun }}
+{{- $sid := add $id 1 | int }}
+{{- $stun := dict
+  "Name" (printf "%dstun" $sid)
+  "RegionID" $sid
+  "HostName" (default $m.stunIPv4 $m.stunHostName)
+  "STUNOnly" true
+  "STUNPort" (include "derper.publicStunPort" . | int)
+}}
+{{- with $m.stunIPv4 }}{{ $_ := set $stun "IPv4" . }}{{ end }}
+{{- $_ := set $regions (toString $sid) (dict
+  "RegionID" $sid
+  "RegionCode" (printf "%s-stun" $m.regionCode)
+  "RegionName" (printf "%s STUN" $m.regionName)
+  "Nodes" (list $stun)
+) }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $m.name }}
+  namespace: {{ default .Release.Namespace $m.namespace }}
+  labels:
+    {{- include "derper.labels" . | nindent 4 }}
+data:
+  {{ $m.key }}: |
+    {{- toPrettyJson (dict "Regions" $regions) | nindent 4 }}
+{{- end }}

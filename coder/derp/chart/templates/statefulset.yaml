@@ -1,0 +1,149 @@
+{{- include "derper.validate" . }}
+{{- $mesh := include "derper.meshEnabled" . }}
+{{- $ca := include "derper.caSecret" . }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "derper.fullname" . }}
+  labels:
+    {{- include "derper.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  serviceName: {{ include "derper.headless" . }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      {{- include "derper.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "derper.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: derper
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - -a=:{{ .Values.ports.derp }}
+            {{- if .Values.stun.enabled }}
+            - -stun-port={{ .Values.ports.stun }}
+            {{- else }}
+            - -stun=false
+            {{- end }}
+            - -http-port=-1
+            - -hostname={{ include "derper.hostname" . }}
+            - -c=/var/lib/derper/derper.key
+            {{- if .Values.tls.enabled }}
+            - -certmode=manual
+            - -certdir=/etc/derper/certs
+            {{- end }}
+            {{- if $mesh }}
+            - -mesh-psk-file=/etc/derper/mesh/{{ .Values.mesh.secretKey }}
+            - -mesh-with={{ include "derper.meshWith" . }}
+            {{- end }}
+            {{- range .Values.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          {{- if and $mesh .Values.tls.enabled $ca }}
+          env:
+            - name: SSL_CERT_FILE
+              value: /etc/derper/ca/{{ .Values.tls.ca.key }}
+          {{- end }}
+          ports:
+            - name: derp
+              containerPort: {{ .Values.ports.derp }}
+              protocol: TCP
+            {{- if .Values.stun.enabled }}
+            - name: stun
+              containerPort: {{ .Values.ports.stun }}
+              protocol: UDP
+            {{- end }}
+          {{- /* With TLS, derper refuses handshakes without SNI = hostname, which kubelet cannot send. */}}
+          readinessProbe:
+            {{- include "derper.probe" . | nindent 12 }}
+            periodSeconds: 10
+          livenessProbe:
+            {{- include "derper.probe" . | nindent 12 }}
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/derper
+            {{- if .Values.tls.enabled }}
+            - name: certs
+              mountPath: /etc/derper/certs
+              readOnly: true
+            {{- end }}
+            {{- if $mesh }}
+            - name: mesh
+              mountPath: /etc/derper/mesh
+              readOnly: true
+            {{- if and .Values.tls.enabled $ca }}
+            - name: ca
+              mountPath: /etc/derper/ca
+              readOnly: true
+            {{- end }}
+            {{- end }}
+      volumes:
+        - name: state
+          emptyDir: {}
+        {{- if .Values.tls.enabled }}
+        - name: certs
+          secret:
+            secretName: {{ include "derper.tlsSecret" . }}
+            items:
+              - key: tls.crt
+                path: {{ include "derper.certName" . }}.crt
+              - key: tls.key
+                path: {{ include "derper.certName" . }}.key
+        {{- end }}
+        {{- if $mesh }}
+        - name: mesh
+          secret:
+            secretName: {{ include "derper.meshSecret" . }}
+        {{- if and .Values.tls.enabled $ca }}
+        - name: ca
+          secret:
+            secretName: {{ $ca }}
+            items:
+              - key: {{ .Values.tls.ca.key }}
+                path: {{ .Values.tls.ca.key }}
+        {{- end }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

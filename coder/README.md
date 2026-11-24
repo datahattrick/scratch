@@ -17,6 +17,7 @@ Users see no organisation field; the template resolves it from their SSO account
 | `tenancy/template-network-policies.yaml` | Lets the provisioner manage NetworkPolicies in the org namespaces, for `org-netpol` |
 | `tenancy/egress-zones.yaml` | One stand-in proxy (Squid) per network zone |
 | `tenancy/zoned-orgs.yaml` | `<org>-zoned-workspaces` namespaces, each assigned a zone |
+| `derp` | Helm chart for a standalone, multi-replica DERP relay and STUN server, for networks without internet access. [Usage](derp/README.md) |
 
 Each template is pushed under its own name, so they can be changed and tested independently.
 Templates reach the modules through a `modules` symlink.

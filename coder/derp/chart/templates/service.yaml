@@ -1,0 +1,119 @@
+# Per-pod DNS for meshing.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "derper.headless" . }}
+  labels:
+    {{- include "derper.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "derper.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: derp
+      port: {{ .Values.ports.derp }}
+      targetPort: derp
+      protocol: TCP
+---
+{{- if .Values.ingress.enabled }}
+# Ingress backend.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "derper.fullname" . }}
+  labels:
+    {{- include "derper.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "derper.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: derp
+      port: 80
+      targetPort: derp
+      protocol: TCP
+{{- if .Values.stun.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "derper.fullname" . }}-stun
+  labels:
+    {{- include "derper.labels" . | nindent 4 }}
+  {{- with .Values.stunService.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.stunService.type }}
+  {{- if ne .Values.stunService.type "ClusterIP" }}
+  externalTrafficPolicy: {{ .Values.stunService.externalTrafficPolicy }}
+  {{- end }}
+  {{- with .Values.stunService.loadBalancerIP }}
+  loadBalancerIP: {{ . }}
+  {{- end }}
+  {{- with .Values.stunService.loadBalancerClass }}
+  loadBalancerClass: {{ . }}
+  {{- end }}
+  {{- with .Values.stunService.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    {{- include "derper.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: stun
+      port: {{ .Values.stunService.port }}
+      targetPort: stun
+      protocol: UDP
+      {{- if and (eq .Values.stunService.type "NodePort") .Values.stunService.nodePort }}
+      nodePort: {{ .Values.stunService.nodePort }}
+      {{- end }}
+{{- end }}
+{{- else }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "derper.fullname" . }}
+  labels:
+    {{- include "derper.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  {{- if ne .Values.service.type "ClusterIP" }}
+  externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy }}
+  {{- end }}
+  {{- with .Values.service.loadBalancerIP }}
+  loadBalancerIP: {{ . }}
+  {{- end }}
+  {{- with .Values.service.loadBalancerClass }}
+  loadBalancerClass: {{ . }}
+  {{- end }}
+  {{- with .Values.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    {{- include "derper.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: derp
+      port: {{ .Values.service.derpPort }}
+      targetPort: derp
+      protocol: TCP
+      {{- if and (eq .Values.service.type "NodePort") .Values.service.nodePorts.derp }}
+      nodePort: {{ .Values.service.nodePorts.derp }}
+      {{- end }}
+    {{- if .Values.stun.enabled }}
+    - name: stun
+      port: {{ .Values.service.stunPort }}
+      targetPort: stun
+      protocol: UDP
+      {{- if and (eq .Values.service.type "NodePort") .Values.service.nodePorts.stun }}
+      nodePort: {{ .Values.service.nodePorts.stun }}
+      {{- end }}
+    {{- end }}
+{{- end }}

@@ -1,0 +1,167 @@
+# Built from ../Dockerfile and pushed to a registry the cluster can pull from.
+image:
+  repository: registry.example.internal/coder-derper
+  tag: "0fde3fc36b30"
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Name clients use to reach the relay. Must resolve, from coderd, workspaces
+# and Coder clients, to the Service's external address (or the ingress).
+# With pod TLS it must match the certificate.
+hostname: ""
+
+# More than one replica meshes them: each pod connects to every pod.
+replicaCount: 2
+
+mesh:
+  # Secret holding the mesh pre-shared key (64+ hex characters). Empty:
+  # the chart creates one and keeps it across upgrades.
+  existingSecret: ""
+  secretKey: mesh-psk
+
+# TLS served by the pods. Turn off with ingress.enabled (the ingress
+# terminates TLS) or for plain HTTP (the DERP map then sets ForceHTTP).
+tls:
+  enabled: true
+  # Existing kubernetes.io/tls Secret for `hostname`. Ignored when
+  # certManager.enabled is true.
+  secretName: ""
+  certManager:
+    enabled: false
+    issuerRef:
+      name: ""
+      kind: ClusterIssuer
+      group: cert-manager.io
+    duration: 2160h
+    renewBefore: 360h
+  # CA the pods trust when meshing over TLS. Empty name: the TLS Secret's
+  # ca.crt when certManager.enabled, else the image's system roots.
+  ca:
+    secretName: ""
+    key: ca.crt
+
+# STUN lets clients learn their public address for direct (p2p)
+# connections. Off: no UDP Service, and the DERP map has no STUN port.
+stun:
+  enabled: true
+
+# Ports derper listens on inside the pod.
+ports:
+  derp: 8443
+  stun: 3478
+
+# Relay and STUN on one LoadBalancer/NodePort Service. Used when
+# ingress.enabled is false.
+service:
+  type: LoadBalancer
+  # Local keeps the client's source address, which STUN reports back.
+  externalTrafficPolicy: Local
+  loadBalancerIP: ""
+  loadBalancerClass: ""
+  # Source CIDRs allowed through the LoadBalancer, e.g. ["10.0.0.0/8"].
+  loadBalancerSourceRanges: []
+  annotations: {}
+  derpPort: 443
+  stunPort: 3478
+  # For type NodePort. Empty lets Kubernetes pick, but the DERP map then
+  # needs derpMap.derpPort / derpMap.stunPort set to what was assigned.
+  nodePorts:
+    derp: ""
+    stun: ""
+
+# Relay through an Ingress (needs tls.enabled=false). STUN is UDP and goes
+# through stunService instead.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  # Defaults to `hostname`.
+  host: ""
+  # Ingress TLS. Off: clients use plain HTTP on port 80 (ForceHTTP).
+  tls:
+    enabled: true
+    secretName: ""
+
+# STUN Service used with ingress.enabled.
+stunService:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  loadBalancerIP: ""
+  loadBalancerClass: ""
+  loadBalancerSourceRanges: []
+  annotations: {}
+  port: 3478
+  nodePort: ""
+
+# ConfigMap holding a DERP map JSON for CODER_DERP_CONFIG_PATH.
+derpMap:
+  enabled: true
+  # Coder's namespace. Defaults to the release namespace.
+  namespace: ""
+  name: coder-derpmap
+  key: derpmap.json
+  # Coder's built-in relay is region 999; its STUN regions are 1000 and up.
+  # A separate STUN region (below) takes regionID + 1.
+  regionID: 900
+  regionCode: custom
+  regionName: Custom DERP
+  # Defaults to ingress.host, then `hostname`.
+  hostName: ""
+  # Skips DNS for the node when set.
+  ipv4: ""
+  # 0: derived from the service/ingress settings.
+  derpPort: 0
+  stunPort: 0
+  # STUN address when it differs from the relay's (e.g. the stunService
+  # IP behind an ingress). Set either to get a separate STUN-only region.
+  stunHostName: ""
+  stunIPv4: ""
+  # Clients skip TLS verification. Only for test setups with an untrusted cert.
+  insecureForTests: false
+
+# Restricts what may reach the pods. Mesh traffic between replicas is
+# always allowed. Empty lists allow any source.
+networkPolicy:
+  enabled: false
+  # NetworkPolicyPeers allowed to the relay port, e.g. the ingress
+  # controller's namespace, coderd and workspace namespaces.
+  derpFrom: []
+  # NetworkPolicyPeers allowed to STUN.
+  stunFrom: []
+
+clusterDomain: cluster.local
+
+# Appended to the derper command line, e.g. ["-accept-connection-limit=1000"].
+extraArgs: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+nameOverride: ""
+fullnameOverride: ""

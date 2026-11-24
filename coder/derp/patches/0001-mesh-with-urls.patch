@@ -1,0 +1,88 @@
+diff --git a/cmd/derper/derper.go b/cmd/derper/derper.go
+index a757745..321e152 100644
+--- a/cmd/derper/derper.go
++++ b/cmd/derper/derper.go
+@@ -49,7 +49,7 @@ var (
+ 	runDERP    = flag.Bool("derp", true, "whether to run a DERP server. The only reason to set this false is if you're decommissioning a server but want to keep its bootstrap DNS functionality still running.")
+ 
+ 	meshPSKFile    = flag.String("mesh-psk-file", defaultMeshPSKFile(), "if non-empty, path to file containing the mesh pre-shared key file. It should contain some hex string; whitespace is trimmed.")
+-	meshWith       = flag.String("mesh-with", "", "optional comma-separated list of hostnames to mesh with; the server's own hostname can be in the list")
++	meshWith       = flag.String("mesh-with", "", "optional comma-separated list of hostnames or http(s) URLs to mesh with, each optionally followed by \"|<dial address>\"; the server's own entry can be in the list")
+ 	bootstrapDNS   = flag.String("bootstrap-dns-names", "", "optional comma-separated list of hostnames to make available at /bootstrap-dns")
+ 	unpublishedDNS = flag.String("unpublished-bootstrap-dns-names", "", "optional comma-separated list of hostnames to make available at /bootstrap-dns and not publish in the list")
+ 	verifyClients  = flag.Bool("verify-clients", false, "verify clients to this DERP server through a local tailscaled instance.")
+diff --git a/cmd/derper/mesh.go b/cmd/derper/mesh.go
+index 5356fba..02189c2 100644
+--- a/cmd/derper/mesh.go
++++ b/cmd/derper/mesh.go
+@@ -33,16 +33,53 @@ func startMesh(s *derp.Server) error {
+ 	return nil
+ }
+ 
+-func startMeshWithHost(s *derp.Server, host string) error {
+-	logf := logger.WithPrefix(log.Printf, fmt.Sprintf("mesh(%q): ", host))
+-	c, err := derphttp.NewClient(s.PrivateKey(), "https://"+host+"/derp", logf)
++// meshTarget parses a -mesh-with entry. An entry is a hostname (dialed as
++// https://<host>/derp) or a full http(s) URL, optionally followed by
++// "|<dial address>" to connect to that address instead of the URL's host
++// while keeping the URL's host for TLS verification.
++func meshTarget(entry string) (urlStr, dialAddr string) {
++	target, dialAddr, _ := strings.Cut(strings.TrimSpace(entry), "|")
++	if strings.Contains(target, "://") {
++		return target, dialAddr
++	}
++	return "https://" + target + "/derp", dialAddr
++}
++
++func startMeshWithHost(s *derp.Server, entry string) error {
++	urlStr, dialAddr := meshTarget(entry)
++	logf := logger.WithPrefix(log.Printf, fmt.Sprintf("mesh(%q): ", urlStr))
++	c, err := derphttp.NewClient(s.PrivateKey(), urlStr, logf)
+ 	if err != nil {
+ 		return err
+ 	}
+ 	c.MeshKey = s.MeshKey()
+ 
+-	// For meshed peers within a region, connect via VPC addresses.
+-	c.SetURLDialer(func(ctx context.Context, network, addr string) (net.Conn, error) {
++	if dialAddr != "" {
++		var d net.Dialer
++		c.SetURLDialer(func(ctx context.Context, network, addr string) (net.Conn, error) {
++			target := dialAddr
++			if _, _, err := net.SplitHostPort(dialAddr); err != nil {
++				_, port, err := net.SplitHostPort(addr)
++				if err != nil {
++					return nil, err
++				}
++				target = net.JoinHostPort(dialAddr, port)
++			}
++			return d.DialContext(ctx, network, target)
++		})
++	} else {
++		// For meshed peers within a region, connect via VPC addresses.
++		c.SetURLDialer(vpcDialer())
++	}
++
++	add := func(k key.NodePublic) { s.AddPacketForwarder(k, c) }
++	remove := func(k key.NodePublic) { s.RemovePacketForwarder(k, c) }
++	go c.RunWatchConnectionLoop(context.Background(), s.PublicKey(), logf, add, remove)
++	return nil
++}
++
++func vpcDialer() func(ctx context.Context, network, addr string) (net.Conn, error) {
++	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+ 		host, port, err := net.SplitHostPort(addr)
+ 		if err != nil {
+ 			return nil, err
+@@ -65,10 +102,5 @@ func startMeshWithHost(s *derp.Server, host string) error {
+ 			}
+ 		}
+ 		return d.DialContext(ctx, network, addr)
+-	})
+-
+-	add := func(k key.NodePublic) { s.AddPacketForwarder(k, c) }
+-	remove := func(k key.NodePublic) { s.RemovePacketForwarder(k, c) }
+-	go c.RunWatchConnectionLoop(context.Background(), s.PublicKey(), logf, add, remove)
+-	return nil
++	}
+ }

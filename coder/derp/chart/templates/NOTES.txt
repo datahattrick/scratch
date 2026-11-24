@@ -1,0 +1,13 @@
+derper relay {{ ternary "https" "http" (not (empty (include "derper.publicTLS" .))) }}://{{ include "derper.publicHost" . }}:{{ include "derper.publicDerpPort" . }}/derp ({{ .Values.replicaCount }} replica(s){{ if include "derper.meshEnabled" . }}, meshed{{ end }})
+{{- if .Values.stun.enabled }}
+STUN          {{ default (include "derper.publicHost" .) (default .Values.derpMap.stunIPv4 .Values.derpMap.stunHostName) }}:{{ include "derper.publicStunPort" . }}/udp
+{{- end }}
+{{- if .Values.derpMap.enabled }}
+
+DERP map: ConfigMap {{ default .Release.Namespace .Values.derpMap.namespace }}/{{ .Values.derpMap.name }}, key {{ .Values.derpMap.key }}.
+Mount it into coderd and set CODER_DERP_CONFIG_PATH, then restart coderd.
+{{- end }}
+{{- if and .Values.tls.enabled .Values.tls.certManager.enabled }}
+
+If cert renewal changes the certificate, restart the pods: derper reads it once at startup.
+{{- end }}

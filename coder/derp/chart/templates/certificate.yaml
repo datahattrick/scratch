@@ -1,0 +1,18 @@
+{{- if and .Values.tls.enabled .Values.tls.certManager.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "derper.fullname" . }}
+  labels:
+    {{- include "derper.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "derper.tlsSecret" . }}
+  dnsNames:
+    - {{ include "derper.hostname" . }}
+  duration: {{ .Values.tls.certManager.duration }}
+  renewBefore: {{ .Values.tls.certManager.renewBefore }}
+  issuerRef:
+    name: {{ required "tls.certManager.issuerRef.name is required" .Values.tls.certManager.issuerRef.name }}
+    kind: {{ .Values.tls.certManager.issuerRef.kind }}
+    group: {{ .Values.tls.certManager.issuerRef.group }}
+{{- end }}

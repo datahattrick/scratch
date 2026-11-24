@@ -1,0 +1,35 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "derper.fullname" . }}
+  labels:
+    {{- include "derper.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "derper.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    # Mesh between replicas.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "derper.selectorLabels" . | nindent 14 }}
+      ports:
+        - {port: derp, protocol: TCP}
+    - ports:
+        - {port: derp, protocol: TCP}
+      {{- with .Values.networkPolicy.derpFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- if .Values.stun.enabled }}
+    - ports:
+        - {port: stun, protocol: UDP}
+      {{- with .Values.networkPolicy.stunFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+{{- end }}
