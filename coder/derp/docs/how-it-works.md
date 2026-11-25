@@ -6,10 +6,10 @@ New to networking? Start with [networking-basics.md](networking-basics.md).
 - [DERP](#derp)
 - [STUN](#stun)
 - [Choosing a home relay](#choosing-a-home-relay)
-- [Replicas and meshing](#replicas-and-meshing)
+- [Nodes, regions and meshing](#nodes-regions-and-meshing)
 - [The production layout](#the-production-layout)
 - [Enabling direct connections (UDP)](#enabling-direct-connections-udp)
-- [Do we need the patch?](#do-we-need-the-patch)
+- [Upstream derper and Coder](#upstream-derper-and-coder)
 - [What was tested](#what-was-tested)
 
 ## Coder networking in one page
@@ -106,26 +106,45 @@ A node stays connected to its home relay and tells coderd which one it is.
 To reach a peer through a relay, a node connects to the **peer's** home region (opening a second relay connection if needed) and sends there.
 So every node must be able to reach every region that any of its peers might call home.
 
-## Replicas and meshing
+## Nodes, regions and meshing
 
-With several `derper` pods behind one hostname, two peers can land on different pods.
-Meshing connects the pods to each other: each pod opens a watch connection to every pod, authenticated with the mesh key, and learns which clients each pod holds.
-A packet for a client on another pod is forwarded over that mesh connection.
+Each entry in `nodes` is one `derper` pod with its own hostname, Service and (behind an ingress) Ingress.
+`derpMap.layout` decides how they appear in the DERP map.
+
+**region-per-node** (default): each node is its own region, numbered from `derpMap.regionID` in list order.
+Every client measures every region and homes on the fastest, so clients spread across the nodes.
+A peer reaches a client by connecting to the client's home region, so the nodes need no mesh.
+If a node fails, its clients re-home at their next network check.
 
 ```mermaid
 flowchart LR
-  A[Agent] -- "home: pod-0" --> P0[derper-0]
-  U[User CLI] -- "home: pod-2" --> P2[derper-2]
-  P0 <-. "mesh (key-authenticated)" .-> P1[derper-1]
-  P1 <-. mesh .-> P2
-  P0 <-. mesh .-> P2
-  U -- "SendPacket(to: A)" --> P2
-  P2 -- "forward over mesh" --> P0
-  P0 -- "RecvPacket" --> A
+  A[Agent] -- "home: 900" --> NA[derper a<br/>region 900]
+  U[User CLI] -- "home: 901" --> NB[derper b<br/>region 901]
+  A -- "send to U" --> NB
+  U -- "send to A" --> NA
 ```
 
-The chart addresses each pod through the headless `<release>-coder-derper-mesh` Service.
-Without meshing, the test client's packets between peers on different pods time out.
+Regions in other clusters work the same way: they are more entries in the same DERP map, and clients home on the fastest.
+Nodes in different regions never mesh, so clusters need no connection to each other.
+
+**single-region**: one region listing the nodes in order.
+Clients dial the first node that answers; websocket clients use only the first node.
+The other nodes are failover, and the nodes mesh so clients on different nodes reach each other:
+each node opens a watch connection to every node, authenticated with the mesh key, and forwards packets for clients it does not hold.
+
+```mermaid
+flowchart LR
+  A[Agent] --> NA[derper a]
+  U[User CLI] --> NB[derper b]
+  NA <-. "mesh (key-authenticated, HTTPS)" .-> NB
+  U -- "SendPacket(to: A)" --> NB
+  NB -- "forward over mesh" --> NA
+  NA -- "RecvPacket" --> A
+```
+
+`derper` meshes over HTTPS only, verifying each node's hostname.
+With TLS in the pods, the chart dials each node's Service; behind an ingress, it dials the ingress (`mesh.ingressDialHost`, or the hostname).
+Without TLS at either, the chart refuses `single-region` with more than one node.
 
 ## The production layout
 
@@ -136,12 +155,13 @@ Workspaces may only egress on TCP 443.
 flowchart TB
   subgraph Cluster
     CD[coderd<br/>built-in relay off] 
-    ING[Ingress controller<br/>TLS for derp.example.internal]
+    ING[Ingress controller<br/>TLS for derp-a, derp-b]
     subgraph derp[derp namespace]
-      P0[derper-0] <-.mesh.-> P1[derper-1]
+      P0[derper a]
+      P1[derper b]
     end
-    ING -- "HTTP /derp" --> P0
-    ING -- "HTTP /derp" --> P1
+    ING -- "derp-a: HTTP /derp" --> P0
+    ING -- "derp-b: HTTP /derp" --> P1
   end
   subgraph WS[Workspace network: egress TCP 443 only]
     AG[Coder agent]
@@ -154,10 +174,10 @@ flowchart TB
   USER -- "API, coordination" --> CD
 ```
 
-- The DERP map has one region (900) with one node, `derp.example.internal:443`, and no STUN port.
+- The DERP map has one region per node (900 `derp-a.example.internal:443`, 901 `derp-b.example.internal:443`), and no STUN port.
 - The agent cannot send UDP, so it never connects directly to anyone. Every connection to a workspace is relayed.
-- All three kinds of client pick region 900 by HTTPS latency, since it is the only region.
-- The ingress terminates TLS; the pods serve plain HTTP and mesh over plain HTTP inside the cluster.
+- Each client picks its home region by HTTPS latency.
+- The ingress terminates TLS; the pods serve plain HTTP.
 - Workspaces and coderd must trust the CA that signed the ingress certificate.
 - A workspace egress NetworkPolicy matches the ingress controller pod's port after NAT (8443 for Traefik), not 443, when the controller runs in the same cluster.
 
@@ -218,42 +238,36 @@ For a workspace NetworkPolicy in the same cluster as the STUN Service, allow UDP
 
 `coder ping <workspace>` reports `p2p via <ip:port>` once the direct path is up; `coder netcheck` shows `"UDP": true`.
 
-## Do we need the patch?
+## Upstream derper and Coder
 
-[The patch](../patches/0001-mesh-with-urls.patch) changes only how `derper` dials its mesh peers.
-The client-facing protocol is unchanged.
+The image is `derper` from `github.com/tailscale/tailscale` at a release tag, unpatched.
+Coder agents and clients use the `github.com/coder/tailscale` fork.
+Both speak DERP protocol version 2 with the same frame types, and upstream `derper` serves what Coder clients call:
+`/derp` (DERP upgrade and websocket with the `derp` subprotocol), `/derp/probe` and `/derp/latency-check`.
 
-Unpatched, `-mesh-with` takes hostnames and dials each as `https://<host>/derp` on port 443, using the hostname both for the connection and for TLS verification.
-That cannot address an individual pod behind a shared hostname:
-
-| Layout | Unpatched mesh entry | Result |
-|---|---|---|
-| Ingress, pods plain HTTP | `derp.example.internal` | Reaches a random pod through the ingress, not each pod |
-| Ingress, pods plain HTTP | `derp-0.derp-mesh.derp.svc` | HTTPS to a plain-HTTP pod fails |
-| LoadBalancer, pods TLS | `derp-0.derp-mesh.derp.svc` | `derper` rejects the TLS name: it accepts only `hostname` |
-
-The patch lets an entry be a full URL (`http://derp-0.derp-mesh.derp.svc:8443/derp`), optionally with `|<dial address>` to connect to one pod while verifying TLS for the shared hostname.
-
-| Replicas | Patch needed |
-|---|:---:|
-| 1 | ❌ |
-| 2+ behind one hostname | ✅ |
-| 2+ as separate regions | ❌ |
-
-Separate regions avoid meshing: give each replica its own hostname (and ingress rule or Service), and list each as its own region in the DERP map.
-Clients home on whichever answers fastest and connect to a peer's region when needed.
-That costs one hostname and certificate per replica, and a client whose replica fails re-homes after its next network check.
-
-Bumping `CODER_TAILSCALE_REF` re-applies the patch; the image build fails if it no longer applies.
+Upstream `-mesh-with` takes `<host>[:port]/<dial host>` entries: TLS is verified for `host` and the connection goes to `dial host`.
+That addresses each node through its Service or the ingress.
 
 ## What was tested
 
-On k3s 1.36 with Traefik, the patched image and 3 replicas:
+Upstream `derper` v1.106.1, on k3s 1.36 with Traefik and two nodes.
+The test client is `derphttp` from `coder/tailscale` at the commit Coder 2.39.1 pins, one client on each node, sending a packet from one to the other.
+
+| Test | DERP | Websocket |
+|---|:---:|:---:|
+| Ingress per node, TLS at Traefik, `single-region`, mesh through Traefik, clients in a pod | ✅ | ✅ |
+| Same, clients on the LAN | ✅ | ✅ |
+| Same, `region-per-node`: both clients on one node | ✅ | |
+| Same, `region-per-node`: clients on different nodes | ❌ (expected, no mesh) | |
+| TLS in the pods from cert-manager, `single-region`, mesh through the node Services | ✅ | ✅ |
+| TLS in the pods from `kubernetes.io/tls` Secrets made from crt/key files, private CA in `tls.ca.secretName` | ✅ | ✅ |
+
+`/derp/latency-check` answered 200 through the ingress.
+
+Earlier, with `derper` built from `coder/tailscale` and replicas behind one hostname:
 
 | Test | Result |
 |---|:---:|
-| Two clients on different pods relay to each other (DERP and websocket), LoadBalancer and Ingress modes | ✅ |
-| Same test against two unmeshed relays | ❌ (expected) |
 | Workspace-like pod limited to TCP 443: UDP and direct pod access blocked, region 900 chosen by HTTPS latency | ✅ |
 | Coder 2.39.1, built-in relay off, workspace limited to TCP 443 plus coderd: `coder ping` via `DERP(Custom DERP)` | ✅ |
 | Same: `coder ssh` | ✅ |

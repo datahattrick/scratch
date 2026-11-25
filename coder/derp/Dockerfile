@@ -1,16 +1,11 @@
-# derper built from github.com/coder/tailscale at the commit Coder pins,
-# so the relay speaks the same DERP version as Coder agents and clients,
-# with patches/ applied (mesh-with URLs, for meshing replicas).
-# Find the commit for another Coder release with:
-#   curl -s https://raw.githubusercontent.com/coder/coder/v<version>/go.mod | grep coder/tailscale
-ARG GO_VERSION=1.25
+# derper built from the official github.com/tailscale/tailscale repository
+# at a release tag. DERP protocol v2, the same as the coder/tailscale fork
+# that Coder agents and clients use.
+ARG GO_VERSION=1.27
 FROM golang:${GO_VERSION} AS build
-ARG CODER_TAILSCALE_REF=0fde3fc36b30
-RUN git clone --filter=blob:none https://github.com/coder/tailscale /src \
- && git -C /src checkout "${CODER_TAILSCALE_REF}"
+ARG TAILSCALE_VERSION=v1.106.1
+RUN git clone --depth 1 --branch "${TAILSCALE_VERSION}" https://github.com/tailscale/tailscale /src
 WORKDIR /src
-COPY patches/ /patches/
-RUN git apply /patches/*.patch
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/derper ./cmd/derper
 
 FROM gcr.io/distroless/static-debian12:nonroot

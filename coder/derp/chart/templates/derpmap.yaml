@@ -1,31 +1,44 @@
 {{- if .Values.derpMap.enabled }}
+{{- $root := . }}
 {{- $m := .Values.derpMap }}
-{{- $id := int $m.regionID }}
+{{- $base := int $m.regionID }}
+{{- $perNode := eq $m.layout "region-per-node" }}
 {{- $splitStun := and .Values.stun.enabled (or $m.stunHostName $m.stunIPv4) }}
+{{- $regions := dict }}
+{{- range $i, $n := .Values.nodes }}
+{{- $ctx := dict "root" $root "node" $n }}
+{{- $rid := ternary (add $base $i) $base $perNode | int }}
 {{- $node := dict
-  "Name" (printf "%da" $id)
-  "RegionID" $id
-  "HostName" (include "derper.publicHost" .)
-  "DERPPort" (include "derper.publicDerpPort" . | int)
-  "STUNPort" (ternary (include "derper.publicStunPort" . | int) -1 (and .Values.stun.enabled (empty $splitStun)))
+  "Name" (printf "%d%s" $rid $n.name)
+  "RegionID" $rid
+  "HostName" $n.hostname
+  "DERPPort" (include "derper.nodePublicDerpPort" $ctx | int)
+  "STUNPort" (ternary (include "derper.nodePublicStunPort" $ctx | int) -1 (and $root.Values.stun.enabled (empty $splitStun)))
 }}
-{{- with $m.ipv4 }}{{ $_ := set $node "IPv4" . }}{{ end }}
-{{- if not (include "derper.publicTLS" .) }}{{ $_ := set $node "ForceHTTP" true }}{{ end }}
+{{- with $n.ipv4 }}{{ $_ := set $node "IPv4" . }}{{ end }}
+{{- if not (include "derper.publicTLS" $root) }}{{ $_ := set $node "ForceHTTP" true }}{{ end }}
 {{- if $m.insecureForTests }}{{ $_ := set $node "InsecureForTests" true }}{{ end }}
-{{- $regions := dict (toString $id) (dict
-  "RegionID" $id
-  "RegionCode" $m.regionCode
-  "RegionName" $m.regionName
+{{- if $perNode }}
+{{- $_ := set $regions (toString $rid) (dict
+  "RegionID" $rid
+  "RegionCode" (printf "%s-%s" $m.regionCode $n.name)
+  "RegionName" (printf "%s %s" $m.regionName $n.name)
   "Nodes" (list $node)
 ) }}
+{{- else }}
+{{- $r := get $regions (toString $rid) | default (dict "RegionID" $rid "RegionCode" $m.regionCode "RegionName" $m.regionName "Nodes" list) }}
+{{- $_ := set $r "Nodes" (append $r.Nodes $node) }}
+{{- $_ := set $regions (toString $rid) $r }}
+{{- end }}
+{{- end }}
 {{- if $splitStun }}
-{{- $sid := add $id 1 | int }}
+{{- $sid := add $base (ternary (len .Values.nodes) 1 $perNode) | int }}
 {{- $stun := dict
   "Name" (printf "%dstun" $sid)
   "RegionID" $sid
   "HostName" (default $m.stunIPv4 $m.stunHostName)
   "STUNOnly" true
-  "STUNPort" (include "derper.publicStunPort" . | int)
+  "STUNPort" (include "derper.nodePublicStunPort" (dict "root" $root "node" (first .Values.nodes)) | int)
 }}
 {{- with $m.stunIPv4 }}{{ $_ := set $stun "IPv4" . }}{{ end }}
 {{- $_ := set $regions (toString $sid) (dict
@@ -34,6 +47,20 @@
   "RegionName" (printf "%s STUN" $m.regionName)
   "Nodes" (list $stun)
 ) }}
+{{- end }}
+{{- range $id, $r := $m.extraRegions }}
+{{- if hasKey $regions (toString $id) }}
+{{- fail (printf "derpMap.extraRegions: region %s clashes with a region of this release; give the other cluster a different derpMap.regionID" $id) }}
+{{- end }}
+{{- if ne (int $id) (int $r.RegionID) }}
+{{- fail (printf "derpMap.extraRegions: key %s does not match its RegionID %v" $id $r.RegionID) }}
+{{- end }}
+{{- $_ := set $regions (toString $id) $r }}
+{{- end }}
+{{- range $id, $_ := $regions }}
+{{- if ge (int $id) 999 }}
+{{- fail (printf "DERP map region %s clashes with Coder's built-in regions (999 and up); lower derpMap.regionID" $id) }}
+{{- end }}
 {{- end }}
 apiVersion: v1
 kind: ConfigMap

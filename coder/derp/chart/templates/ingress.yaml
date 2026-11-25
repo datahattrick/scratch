@@ -1,11 +1,15 @@
 {{- if .Values.ingress.enabled }}
-{{- $host := default (include "derper.hostname" .) .Values.ingress.host }}
+{{- $root := . }}
+{{- range .Values.nodes }}
+{{- $ctx := dict "root" $root "node" . }}
+{{- with $root }}
+---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "derper.fullname" . }}
+  name: {{ include "derper.nodeFullname" $ctx }}
   labels:
-    {{- include "derper.labels" . | nindent 4 }}
+    {{- include "derper.nodeLabels" $ctx | nindent 4 }}
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -16,18 +20,20 @@ spec:
   {{- end }}
   {{- if .Values.ingress.tls.enabled }}
   tls:
-    - hosts: [{{ $host | quote }}]
-      secretName: {{ required "ingress.tls.secretName is required when ingress.tls.enabled" .Values.ingress.tls.secretName }}
+    - hosts: [{{ $ctx.node.hostname | quote }}]
+      secretName: {{ include "derper.nodeIngressTLSSecret" $ctx }}
   {{- end }}
   rules:
-    - host: {{ $host | quote }}
+    - host: {{ $ctx.node.hostname | quote }}
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: {{ include "derper.fullname" . }}
+                name: {{ include "derper.nodeFullname" $ctx }}
                 port:
                   name: derp
+{{- end }}
+{{- end }}
 {{- end }}

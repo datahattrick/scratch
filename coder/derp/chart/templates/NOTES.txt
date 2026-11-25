@@ -1,6 +1,8 @@
-derper relay {{ ternary "https" "http" (not (empty (include "derper.publicTLS" .))) }}://{{ include "derper.publicHost" . }}:{{ include "derper.publicDerpPort" . }}/derp ({{ .Values.replicaCount }} replica(s){{ if include "derper.meshEnabled" . }}, meshed{{ end }})
-{{- if .Values.stun.enabled }}
-STUN          {{ default (include "derper.publicHost" .) (default .Values.derpMap.stunIPv4 .Values.derpMap.stunHostName) }}:{{ include "derper.publicStunPort" . }}/udp
+{{- $root := . }}
+{{- $scheme := ternary "https" "http" (not (empty (include "derper.publicTLS" .))) }}
+derper relay nodes ({{ .Values.derpMap.layout }}{{ if include "derper.meshEnabled" . }}, meshed{{ end }}):
+{{- range .Values.nodes }}
+  {{ .name }}: {{ $scheme }}://{{ .hostname }}:{{ include "derper.nodePublicDerpPort" (dict "root" $root "node" .) }}/derp
 {{- end }}
 {{- if .Values.derpMap.enabled }}
 

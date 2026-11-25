@@ -207,7 +207,7 @@ Large file copies may be somewhat slower through the relay; this was not measure
 | DERP | Tailscale's relay protocol; forwards encrypted packets over HTTPS |
 | Direct / p2p | You and the workspace exchange UDP packets with no relay |
 | Ingress | The web entry point to the cluster; terminates HTTPS |
-| Mesh | Relay replicas connected to each other, so users on different replicas can reach each other |
+| Mesh | Relay servers in one region connected to each other, so users on different servers can reach each other |
 | NAT | Rewriting addresses so many machines share one outside address |
 | Port | Number picking the program on a machine (443 = HTTPS) |
 | Stateful firewall | Remembers conversations and lets replies back |

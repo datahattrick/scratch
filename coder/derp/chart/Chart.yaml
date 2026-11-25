@@ -2,5 +2,5 @@ apiVersion: v2
 name: coder-derper
 description: Standalone DERP relay and STUN server for Coder
 type: application
-version: 0.2.0
-appVersion: "0fde3fc36b30"
+version: 0.3.0
+appVersion: "v1.106.1"

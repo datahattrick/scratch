@@ -1,18 +1,27 @@
 {{- if and .Values.tls.enabled .Values.tls.certManager.enabled }}
+{{- $root := . }}
+{{- range .Values.nodes }}
+{{- $ctx := dict "root" $root "node" . }}
+{{- if not .tlsSecretName }}
+{{- with $root }}
+---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ include "derper.fullname" . }}
+  name: {{ include "derper.nodeFullname" $ctx }}
   labels:
-    {{- include "derper.labels" . | nindent 4 }}
+    {{- include "derper.nodeLabels" $ctx | nindent 4 }}
 spec:
-  secretName: {{ include "derper.tlsSecret" . }}
+  secretName: {{ include "derper.nodeTLSSecret" $ctx }}
   dnsNames:
-    - {{ include "derper.hostname" . }}
+    - {{ $ctx.node.hostname }}
   duration: {{ .Values.tls.certManager.duration }}
   renewBefore: {{ .Values.tls.certManager.renewBefore }}
   issuerRef:
     name: {{ required "tls.certManager.issuerRef.name is required" .Values.tls.certManager.issuerRef.name }}
     kind: {{ .Values.tls.certManager.issuerRef.kind }}
     group: {{ .Values.tls.certManager.issuerRef.group }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- end }}

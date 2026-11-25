@@ -1,30 +1,45 @@
 # Built from ../Dockerfile and pushed to a registry the cluster can pull from.
 image:
   repository: registry.example.internal/coder-derper
-  tag: "0fde3fc36b30"
+  tag: "v1.106.1"
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
-# Name clients use to reach the relay. Must resolve, from coderd, workspaces
-# and Coder clients, to the Service's external address (or the ingress).
-# With pod TLS it must match the certificate.
-hostname: ""
+# Relay servers. Each gets its own Deployment (one pod), Service, Ingress
+# (with ingress.enabled) and DNS name, and its own entry in the DERP map.
+# `hostname` must resolve, from coderd, workspaces and Coder clients, to
+# that node's Service or the ingress, and match its certificate.
+nodes: []
+#  - name: a                       # DNS label, used in resource names
+#    hostname: derp-a.example.internal
+#    ipv4: ""                      # DERP map IPv4, so clients skip DNS
+#    loadBalancerIP: ""            # this node's LoadBalancer address
+#    serviceAnnotations: {}        # merged over service.annotations
+#    nodePorts: {derp: "", stun: ""}  # with service.type=NodePort
+#    tlsSecretName: ""             # overrides tls.secretName / ingress.tls.secretName
+#    nodeSelector: {}              # overrides nodeSelector
+#    affinity: {}                  # overrides affinity
 
-# More than one replica meshes them: each pod connects to every pod.
-replicaCount: 2
-
+# Meshing, used only with derpMap.layout=single-region and more than one
+# node: each node connects to every node over HTTPS, so clients on
+# different nodes of the region reach each other.
 mesh:
-  # Secret holding the mesh pre-shared key (64+ hex characters). Empty:
-  # the chart creates one and keeps it across upgrades.
+  # Secret holding the mesh pre-shared key (64 lowercase hex characters).
+  # Empty: the chart creates one and keeps it across upgrades.
   existingSecret: ""
   secretKey: mesh-psk
+  # Behind an ingress, the address pods dial to reach the ingress for
+  # mesh connections, e.g. traefik.kube-system.svc.cluster.local. Empty:
+  # each node's hostname. TLS is verified against the hostname either way.
+  ingressDialHost: ""
 
 # TLS served by the pods. Turn off with ingress.enabled (the ingress
 # terminates TLS) or for plain HTTP (the DERP map then sets ForceHTTP).
 tls:
   enabled: true
-  # Existing kubernetes.io/tls Secret for `hostname`. Ignored when
-  # certManager.enabled is true.
+  # Existing kubernetes.io/tls Secret valid for every node hostname (SANs
+  # or a wildcard). nodes[].tlsSecretName overrides it per node. Ignored
+  # when certManager.enabled is true (one Certificate per node).
   secretName: ""
   certManager:
     enabled: false
@@ -34,7 +49,7 @@ tls:
       group: cert-manager.io
     duration: 2160h
     renewBefore: 360h
-  # CA the pods trust when meshing over TLS. Empty name: the TLS Secret's
+  # CA the pods trust when meshing. Empty name: the node's TLS Secret's
   # ca.crt when certManager.enabled, else the image's system roots.
   ca:
     secretName: ""
@@ -50,39 +65,33 @@ ports:
   derp: 8443
   stun: 3478
 
-# Relay and STUN on one LoadBalancer/NodePort Service. Used when
+# Relay and STUN on one LoadBalancer/NodePort Service per node. Used when
 # ingress.enabled is false.
 service:
   type: LoadBalancer
   # Local keeps the client's source address, which STUN reports back.
   externalTrafficPolicy: Local
-  loadBalancerIP: ""
   loadBalancerClass: ""
   # Source CIDRs allowed through the LoadBalancer, e.g. ["10.0.0.0/8"].
   loadBalancerSourceRanges: []
   annotations: {}
   derpPort: 443
   stunPort: 3478
-  # For type NodePort. Empty lets Kubernetes pick, but the DERP map then
-  # needs derpMap.derpPort / derpMap.stunPort set to what was assigned.
-  nodePorts:
-    derp: ""
-    stun: ""
+  # NodePorts are set per node (nodes[].nodePorts).
 
-# Relay through an Ingress (needs tls.enabled=false). STUN is UDP and goes
-# through stunService instead.
+# One Ingress per node, for its hostname (needs tls.enabled=false). STUN
+# is UDP and goes through stunService instead.
 ingress:
   enabled: false
   className: ""
   annotations: {}
-  # Defaults to `hostname`.
-  host: ""
-  # Ingress TLS. Off: clients use plain HTTP on port 80 (ForceHTTP).
+  # Ingress TLS. Off: clients use plain HTTP on port 80 (ForceHTTP), and
+  # nodes cannot mesh.
   tls:
     enabled: true
     secretName: ""
 
-# STUN Service used with ingress.enabled.
+# STUN Service shared by all nodes, used with ingress.enabled.
 stunService:
   type: LoadBalancer
   externalTrafficPolicy: Local
@@ -100,15 +109,22 @@ derpMap:
   namespace: ""
   name: coder-derpmap
   key: derpmap.json
+  # region-per-node: each node is its own region. Clients measure every
+  #   region and each picks the lowest-latency one as home, which spreads
+  #   them across nodes; peers reach a client through its home region.
+  #   No mesh.
+  # single-region: one region listing the nodes in order. Clients use the
+  #   first node that answers (websocket clients only the first), so the
+  #   rest are failover; the nodes mesh.
+  layout: region-per-node
   # Coder's built-in relay is region 999; its STUN regions are 1000 and up.
-  # A separate STUN region (below) takes regionID + 1.
+  # region-per-node numbers nodes regionID, regionID+1, ... in list order;
+  # keep the order stable, as clients key on region IDs. A separate STUN
+  # region (below) takes the next ID.
   regionID: 900
+  # region-per-node appends the node name to each.
   regionCode: custom
   regionName: Custom DERP
-  # Defaults to ingress.host, then `hostname`.
-  hostName: ""
-  # Skips DNS for the node when set.
-  ipv4: ""
   # 0: derived from the service/ingress settings.
   derpPort: 0
   stunPort: 0
@@ -116,10 +132,14 @@ derpMap:
   # IP behind an ingress). Set either to get a separate STUN-only region.
   stunHostName: ""
   stunIPv4: ""
+  # Regions from other clusters, merged into this map, in DERP map JSON
+  # form keyed by region ID: the "Regions" object of the other cluster's
+  # rendered derpmap.json. IDs must not clash with this release's.
+  extraRegions: {}
   # Clients skip TLS verification. Only for test setups with an untrusted cert.
   insecureForTests: false
 
-# Restricts what may reach the pods. Mesh traffic between replicas is
+# Restricts what may reach the pods. Mesh traffic between pods is
 # always allowed. Empty lists allow any source.
 networkPolicy:
   enabled: false
@@ -146,7 +166,6 @@ podLabels: {}
 nodeSelector: {}
 tolerations: []
 affinity: {}
-topologySpreadConstraints: []
 priorityClassName: ""
 
 podSecurityContext:
